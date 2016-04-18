@@ -19,18 +19,24 @@ Bluebird.promisifyAll(fs);
  *
  * @param opts
  */
-function prepareOptions(opts) {
-    if (!opts) {
-        opts = {};
-    }
-
-    const options = _.defaults(opts, {
-        base: file.guessBasePath(opts),
+function parseOptions(opts) {
+    var options = _.defaults(opts || {}, {
+        base: file.guessBasePath(opts || {}),
+        minify: false,
         dimensions: [{
             height: opts.height || 900,
             width: opts.width || 1300
         }]
     });
+
+    if (options.inline) {
+        options.inline = _.isObject(options.inline) || {};
+        options.inline = _.defaults(options.inline, {
+            minify: options.minify || false,
+            extract: options.extract || false,
+            basePath: options.base || process.cwd()
+        });
+    }
 
     // Set dest relative to base if isn't specivied absolute
     if (options.dest && !path.isAbsolute(options.dest)) {
@@ -53,7 +59,7 @@ function prepareOptions(opts) {
  * @return {Promise}|undefined
  */
 exports.generate = function (opts, cb) {
-    opts = prepareOptions(opts);
+    opts = parseOptions(opts);
 
     // Generate critical css
     let corePromise = core.generate(opts);
@@ -76,11 +82,7 @@ exports.generate = function (opts, cb) {
             file: file.getVinylPromise(opts),
             css: corePromise
         }).then(result => {
-            return sourceInliner(result.file.contents.toString(), result.css, {
-                minify: opts.minify || false,
-                extract: opts.extract || false,
-                basePath: opts.base || process.cwd()
-            });
+            return sourceInliner(result.html, result.css, opts.inline);
         });
     }
 
