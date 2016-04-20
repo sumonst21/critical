@@ -6,6 +6,7 @@ const chalk = require('chalk');
 const meow = require('meow');
 const indentString = require('indent-string');
 const stdin = require('get-stdin');
+const groupArgs = require('group-args');
 const _ = require('lodash');
 
 const file = require('./lib/file-helper');
@@ -26,6 +27,7 @@ const help = [
     '   -e, --extract           Extract inlined styles from referenced stylesheets',
     '   -p, --pathPrefix        Path to prepend CSS assets with (defaults to /) ',
     '   -f, --folder            HTML Subfolder (default: \'\')',
+    '   --inline-<option>       Pass options to inline-critical. See https://git.io/vwYMX',
     '   --ii, --inlineImages    Inline images',
     '   --ignore                RegExp, @type or selector to ignore',
     '   --include               RegExp, @type or selector to include',
@@ -40,9 +42,8 @@ const help = [
     '   -S, --styleTarget       Target for generated critical-path CSS (which we inline)'
 ];
 
-const cli = meow({
-    help
-}, {
+
+var minimistOpts = {
     alias: {
         b: 'base',
         c: 'css',
@@ -58,7 +59,14 @@ const cli = meow({
         p: 'pathPrefix',
         ii: 'inlineImages'
     }
-});
+};
+var cli = meow({help: help}, minimistOpts);
+
+cli.flags = groupArgs('inline', {
+    ignore: ['inline-images'],
+    argv: cli.flags,
+    strict: false
+}, minimistOpts);
 
 // Cleanup cli flags and assert cammelcase keeps camelcase
 cli.flags = _.reduce(cli.flags, (res, val, key) => {
@@ -76,9 +84,6 @@ cli.flags = _.reduce(cli.flags, (res, val, key) => {
         case 'pathprefix':
             res.pathPrefix = val;
             break;
-        case 'inline':
-            res.inline = (val && val !== 'false') || typeof val === 'undefined';
-            break;
         case 'inlineimages':
             res.inlineImages = val;
             break;
@@ -89,7 +94,6 @@ cli.flags = _.reduce(cli.flags, (res, val, key) => {
             res.timeout = val;
             break;
         case 'assetpaths':
-        case 'assetPaths':
             if (_.isString(val)) {
                 val = [val];
             }
