@@ -2,6 +2,7 @@
 const path = require('path');
 const fs = require('fs-extra');
 const _ = require('lodash');
+const chalk = require('chalk');
 const sourceInliner = require('inline-critical');
 const Bluebird = require('bluebird');
 const through2 = require('through2');
@@ -19,24 +20,18 @@ Bluebird.promisifyAll(fs);
  *
  * @param opts
  */
-function parseOptions(opts) {
-    var options = _.defaults(opts || {}, {
-        base: file.guessBasePath(opts || {}),
-        minify: false,
+function prepareOptions(opts) {
+    if (!opts) {
+        opts = {};
+    }
+
+    const options = _.defaults(opts, {
+        base: file.guessBasePath(opts),
         dimensions: [{
             height: opts.height || 900,
             width: opts.width || 1300
         }]
     });
-
-    if (options.inline) {
-        options.inline = _.isObject(options.inline) || {};
-        options.inline = _.defaults(options.inline, {
-            minify: options.minify || false,
-            extract: options.extract || false,
-            basePath: options.base || process.cwd()
-        });
-    }
 
     // Set dest relative to base if isn't specivied absolute
     if (options.dest && !path.isAbsolute(options.dest)) {
@@ -46,6 +41,27 @@ function parseOptions(opts) {
     // Set dest relative to base if isn't specivied absolute
     if (options.destFolder && !path.isAbsolute(options.destFolder)) {
         options.destFolder = path.join(options.base, options.destFolder);
+    }
+
+    // Set options for inline-critical
+    options.inline = Boolean(options.inline) && _.assign({
+        minify: opts.minify || false,
+        extract: opts.extract || false,
+        basePath: opts.base || process.cwd()
+    }, (_.isObject(options.inline) && options.inline) || {});
+
+    // Set penthouse options
+    options.penthouse = _.assign({}, {
+        forceInclude: opts.include || [],
+        timeout: opts.timeout || 30000,
+        maxEmbeddedBase64Length: opts.maxImageFileSize || 10240
+    }, options.penthouse || {});
+
+    // Show overwrite warning if penthouse params url, css, witdh or height are present
+    const checkOpts = _.intersection(_.keys(options.penthouse), ['url', 'css', 'width', 'height']);
+    if (checkOpts.length > 0) {
+        console.warn(chalk.yellow('Detected presence of penthouse options:'), checkOpts.join(', '));
+        console.warn(chalk.yellow('These options will be overwritten by critical during the process.'));
     }
 
     return options;
@@ -59,7 +75,7 @@ function parseOptions(opts) {
  * @return {Promise}|undefined
  */
 exports.generate = function (opts, cb) {
-    opts = parseOptions(opts);
+    opts = prepareOptions(opts);
 
     // Generate critical css
     let corePromise = core.generate(opts);
@@ -82,7 +98,7 @@ exports.generate = function (opts, cb) {
             file: file.getVinylPromise(opts),
             css: corePromise
         }).then(result => {
-            return sourceInliner(result.html, result.css, opts.inline);
+            return sourceInliner(result.file.contents.toString(), result.css, opts.inline);
         });
     }
 
@@ -120,7 +136,9 @@ exports.generate = function (opts, cb) {
  * @returns {Promise}|undefined
  */
 exports.generateInline = function (opts, cb) {
-    opts.inline = true;
+    if (!opts.inline) {
+        opts.inline = true;
+    }
     if (opts.htmlTarget) {
         opts.dest = opts.htmlTarget;
     } else if (opts.styleTarget) {
@@ -139,7 +157,8 @@ exports.generateInline = function (opts, cb) {
  */
 exports.inline = function (opts, cb) {
     opts = opts || {};
-    cb = cb || function () {};
+    cb = cb || function () {
+    };
 
     if (!opts.src || !opts.base) {
         throw new Error('A valid source and base path are required.');

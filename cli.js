@@ -42,8 +42,7 @@ const help = [
     '   -S, --styleTarget       Target for generated critical-path CSS (which we inline)'
 ];
 
-
-var minimistOpts = {
+const minimistOpts = {
     alias: {
         b: 'base',
         c: 'css',
@@ -60,7 +59,7 @@ var minimistOpts = {
         ii: 'inlineImages'
     }
 };
-var cli = meow({help: help}, minimistOpts);
+const cli = meow({help}, minimistOpts);
 
 cli.flags = groupArgs('inline', {
     ignore: ['inline-images'],
