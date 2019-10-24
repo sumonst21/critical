@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+'use strict';
+
 const os = require('os');
 const chalk = require('chalk');
 const meow = require('meow');
@@ -10,6 +12,7 @@ const reduce = require('lodash/reduce');
 const isString = require('lodash/isString');
 const isObject = require('lodash/isObject');
 const escapeRegExp = require('lodash/escapeRegExp');
+const {validate} = require('./src/config');
 const critical = require('.');
 
 const help = `
@@ -35,7 +38,7 @@ Options:
   --ua, --userAgent       User agent to use when fetching remote src
 `;
 
-const minimistOpts = {
+const meowOpts = {
   flags: {
     base: {
       type: 'string',
@@ -58,6 +61,7 @@ const minimistOpts = {
     extract: {
       type: 'boolean',
       alias: 'e',
+      default: false,
     },
     inlineImages: {
       type: 'boolean',
@@ -78,9 +82,9 @@ const minimistOpts = {
   },
 };
 
-const cli = meow(help, minimistOpts);
+const cli = meow(help, meowOpts);
 
-const groupKeys = ['ignore', 'inline', 'penthouse', 'target'];
+const groupKeys = ['ignore', 'inline', 'penthouse', 'target', 'request'];
 // Group args for inline-critical and penthouse
 const grouped = {
   ...cli.flags,
@@ -89,7 +93,7 @@ const grouped = {
     {
       delimiter: '-',
     },
-    minimistOpts
+    meowOpts
   ),
 };
 
@@ -103,9 +107,9 @@ const isAlias = key => {
     return false;
   }
 
-  const aliases = Object.keys(minimistOpts.flags)
-    .filter(k => minimistOpts.flags[k].alias)
-    .map(k => minimistOpts.flags[k].alias);
+  const aliases = Object.keys(meowOpts.flags)
+    .filter(k => meowOpts.flags[k].alias)
+    .map(k => meowOpts.flags[k].alias);
 
   return aliases.includes(key);
 };
@@ -113,7 +117,7 @@ const isAlias = key => {
 /**
  * Check if value is an empty object
  * @param {mixed} val Value to check
- * @returns {boolean} Wether or not this is an empty object
+ * @returns {boolean} Whether or not this is an empty object
  */
 const isEmptyObj = val => isObject(val) && Object.keys(val).length === 0;
 
@@ -155,9 +159,15 @@ const normalizedFlags = reduce(
       }
     }
 
+    // Cleanup camelized group keys
+    if (groupKeys.find(k => key.includes(k)) && !validate(key, val)) {
+      return res;
+    }
+
     if (!isAlias(key)) {
       res[key] = mapRegExpStr(val);
     }
+
     return res;
   },
   {}
@@ -176,7 +186,7 @@ function run(data) {
   // Detect css globbing
   const cssBegin = process.argv.findIndex(el => ['--css', '-c'].includes(el));
   const cssEnd = process.argv.findIndex((el, index) => index > cssBegin && el.startsWith('-'));
-  const cssCheck = process.argv.slice(cssBegin, cssEnd > 0 ? cssEnd : undefined);
+  const cssCheck = cssBegin >= 0 ? process.argv.slice(cssBegin, cssEnd > 0 ? cssEnd : undefined) : [];
   const additionalCss = inputs.filter(file => cssCheck.includes(file));
   // Just take the first html input as we don't support multiple html sources for
   const [input] = inputs.filter(file => !additionalCss.includes(file));
@@ -197,6 +207,10 @@ function run(data) {
     critical.generate(opts, (error, val) => {
       if (error) {
         showError(error);
+      } else if (opts.inline) {
+        process.stdout.write(val.html, process.exit);
+      } else if (opts.extract) {
+        process.stdout.write(val.uncritical, process.exit);
       } else {
         process.stdout.write(val.css, process.exit);
       }

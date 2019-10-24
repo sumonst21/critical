@@ -1,4 +1,7 @@
-/* eslint promise/prefer-await-to-then:0 */
+/* eslint-disable promise/prefer-await-to-then */
+
+'use strict';
+
 const path = require('path');
 const fs = require('fs-extra');
 const through2 = require('through2');
@@ -16,25 +19,29 @@ const {getOptions} = require('./src/config');
 async function generate(params, cb) {
   try {
     const options = getOptions(params);
-    const {target = {}} = options;
-    const {css, html} = await create(options);
-
+    const {target = {}, base = process.cwd()} = options;
+    const result = await create(options);
     // Store generated css
     if (target.css) {
-      await fs.outputFile(path.resolve(target.css), css);
+      await fs.outputFile(path.resolve(base, target.css), result.css);
     }
 
     // Store generated html
     if (target.html) {
-      await fs.outputFile(path.resolve(target.html), html);
+      await fs.outputFile(path.resolve(base, target.html), result.html);
+    }
+
+    // Store extracted css
+    if (target.uncritical) {
+      await fs.outputFile(path.resolve(base, target.uncritical), result.uncritical);
     }
 
     if (typeof cb === 'function') {
-      cb(null, {css, html});
+      cb(null, result);
       return;
     }
 
-    return {css, html};
+    return result;
   } catch (error) {
     if (typeof cb === 'function') {
       cb(error);

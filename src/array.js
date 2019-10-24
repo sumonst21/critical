@@ -1,9 +1,12 @@
+'use strict';
+
 async function mapAsync(array = [], callback = a => a) {
   const result = [];
   for (const index of array.keys()) {
     const mapped = await callback(array[index], index, array); /* eslint-disable-line no-await-in-loop */
     result.push(mapped);
   }
+
   return result;
 }
 
@@ -21,10 +24,11 @@ async function filterAsync(array = [], filter = a => a) {
       result.push(array[index]);
     }
   }
+
   return result;
 }
 
-async function reduceAsync(array = [], reducer = r => r, initial) {
+async function reduceAsync(initial, array = [], reducer = r => r) {
   for (const index of array.keys()) {
     initial = await reducer(initial, array[index], index); /* eslint-disable-line no-await-in-loop */
   }

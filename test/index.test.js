@@ -1,3 +1,5 @@
+'use strict';
+
 const path = require('path');
 const fs = require('fs-extra');
 const vinylStream = require('vinyl-source-stream');
@@ -5,12 +7,21 @@ const Vinyl = require('vinyl');
 const PluginError = require('plugin-error');
 const nn = require('normalize-newline');
 const streamAssert = require('stream-assert');
+const tempy = require('tempy');
 const {ConfigError, FileNotFoundError, NoCssError} = require('../src/errors');
 const {getVinyl, readAndRemove, read} = require('./helper');
-const {generate, stream} = require('../index');
+const {generate, stream} = require('..');
 
 jest.setTimeout(20000);
 
+let stderr;
+beforeEach(() => {
+  stderr = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+});
+
+afterEach(() => {
+  stderr.mockRestore();
+});
 test('Handle errors with passed callback method', done => {
   const tmp = generate({}, (error, data) => {
     expect(data).toBeFalsy();
@@ -21,11 +32,12 @@ test('Handle errors with passed callback method', done => {
   expect(tmp).resolves.toBeUndefined();
 });
 
-test('Call callback function with object containing html & css props', done => {
+test('Call callback function with object containing html, css and uncritical props', done => {
   generate({src: path.join(__dirname, 'fixtures/generate-default.html')}, (error, data) => {
     expect(error).toBeFalsy();
     expect(data).toHaveProperty('css');
     expect(data).toHaveProperty('html');
+    expect(data).toHaveProperty('uncritical');
     done();
   });
 });
@@ -50,20 +62,74 @@ test('Write html target', async () => {
   expect(content).toBe(data.html);
 });
 
-test('Write both targets', async () => {
+test('Write all targets', async () => {
   const data = await generate({
     src: path.join(__dirname, 'fixtures/generate-default.html'),
-    target: {html: '.test.html', css: '.test.css'},
+    target: {html: '.test.html', css: '.test.css', uncritical: '.uncritical.css'},
   });
   expect(data).toHaveProperty('css');
   expect(data).toHaveProperty('html');
   expect(fs.existsSync('.test.css')).toBeTruthy();
+  expect(fs.existsSync('.uncritical.css')).toBeTruthy();
   expect(fs.existsSync('.test.html')).toBeTruthy();
 
   const html = readAndRemove('.test.html');
   const css = readAndRemove('.test.css');
+  readAndRemove('.uncritical.css');
   expect(html).toBe(data.html);
   expect(css).toBe(data.css);
+});
+
+test('Write all targets relative to base', async () => {
+  const base = tempy.directory();
+  const getFile = f => path.join(base, f);
+  const data = await generate({
+    base,
+    src: path.join(__dirname, 'fixtures/generate-default.html'),
+    target: {html: '.test.html', css: '.test.css', uncritical: '.uncritical.css'},
+  });
+  expect(data).toHaveProperty('css');
+  expect(data).toHaveProperty('html');
+  expect(data).toHaveProperty('uncritical');
+  expect(fs.existsSync(getFile('.test.css'))).toBeTruthy();
+  expect(fs.existsSync(getFile('.uncritical.css'))).toBeTruthy();
+  expect(fs.existsSync(getFile('.test.html'))).toBeTruthy();
+
+  const html = readAndRemove(getFile('.test.html'));
+  const css = readAndRemove(getFile('.test.css'));
+  const uncritical = readAndRemove(getFile('.uncritical.css'));
+  expect(uncritical).toBe(data.uncritical);
+  expect(html).toBe(data.html);
+  expect(css).toBe(data.css);
+
+  await fs.remove(base);
+});
+
+test('Write all targets respecting absolute paths', async () => {
+  const base = tempy.directory();
+  const fileBase = tempy.directory();
+  const getFile = f => path.join(fileBase, f);
+  const data = await generate({
+    base,
+    src: path.join(__dirname, 'fixtures/generate-default.html'),
+    target: {html: getFile('.test.html'), css: getFile('.test.css'), uncritical: getFile('.uncritical.css')},
+  });
+  expect(data).toHaveProperty('css');
+  expect(data).toHaveProperty('html');
+  expect(data).toHaveProperty('uncritical');
+  expect(fs.existsSync(getFile('.test.css'))).toBeTruthy();
+  expect(fs.existsSync(getFile('.uncritical.css'))).toBeTruthy();
+  expect(fs.existsSync(getFile('.test.html'))).toBeTruthy();
+
+  const html = readAndRemove(getFile('.test.html'));
+  const css = readAndRemove(getFile('.test.css'));
+  const uncritical = readAndRemove(getFile('.uncritical.css'));
+  expect(uncritical).toBe(data.uncritical);
+  expect(html).toBe(data.html);
+  expect(css).toBe(data.css);
+
+  await fs.remove(base);
+  await fs.remove(fileBase);
 });
 
 test('Reject with ConfigError on invalid config', () => {
@@ -268,4 +334,50 @@ test('issue 341', async () => {
   expect(results[0].css).toBe(expected[0].css);
   expect(results[1].css).toBe(expected[1].css);
   expect(results[2].css).toBe(expected[2].css);
+});
+
+test('Replace stylesheet on extract-target', async () => {
+  const target = path.join(__dirname, 'fixtures/styles/uncritical.css');
+  const result = await generate({
+    html: read('fixtures/generate-adaptive.html'),
+    base: path.join(__dirname, 'fixtures'),
+    target: {uncritical: target},
+    minify: true,
+    extract: true,
+    inline: true,
+  });
+
+  const uncritical = readAndRemove(target);
+
+  expect(result.html).toMatch('"/styles/uncritical.css"');
+  expect(uncritical).toBe(result.uncritical);
+});
+
+test('Remove stylesheet on empty uncritical css', async () => {
+  const result = await generate({
+    html: read('fixtures/issue-304.html'),
+    base: path.join(__dirname, 'fixtures'),
+    minify: true,
+    extract: true,
+    inline: true,
+  });
+
+  expect(result.html).not.toMatch('<link');
+  expect(result.uncritical).toBe(result.uncritical);
+});
+
+test('Use async cb result for inline.replaceStylesheets', async () => {
+  const cb = () => Promise.resolve(['ab.css']);
+  const result = await generate({
+    html: read('fixtures/issue-304.html'),
+    base: path.join(__dirname, 'fixtures'),
+    minify: true,
+    extract: true,
+    inline: {
+      replaceStylesheets: cb,
+    },
+  });
+
+  expect(result.html).toMatch('"ab.css"');
+  expect(result.uncritical).toBe(result.uncritical);
 });

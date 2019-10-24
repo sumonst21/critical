@@ -1,4 +1,5 @@
-/* eslint-env jest node */
+'use strict';
+
 const path = require('path');
 const readPkgUp = require('read-pkg-up');
 const execa = require('execa');
@@ -12,8 +13,8 @@ process.setMaxListeners(0);
 jest.setTimeout(60000);
 
 const getBin = async () => {
-  const {pkg} = await readPkgUp();
-  return path.join(__dirname, '../', pkg.bin.critical);
+  const {packageJson} = await readPkgUp();
+  return path.join(__dirname, '../', packageJson.bin.critical);
 };
 
 const run = async (args = []) => {
@@ -24,7 +25,7 @@ const run = async (args = []) => {
 const getArgs = async (params = []) => {
   const bin = await getBin();
   const origArgv = process.argv;
-  const critical = require('../index');
+  const critical = require('..');
 
   critical.generate = jest.fn();
   process.argv = ['node', bin, ...params];
@@ -41,7 +42,7 @@ const pipe = async (filename, args = []) => {
   const cat = process.platform === 'win32' ? 'type' : 'cat';
   const bin = await getBin();
   const cmd = `${cat} ${filename} | node ${bin} ${args.join(' ')}`;
-  return execa.shell(cmd);
+  return execa(cmd, {shell: true});
 };
 
 describe('CLI', () => {
@@ -51,23 +52,23 @@ describe('CLI', () => {
       try {
         await run(['not available']);
       } catch (error) {
-        expect(error.stderr).toMatch('ConfigError');
+        expect(error.stderr).toMatch('Error:');
         expect(error.stderr).toMatch('Usage: critical');
-        expect(error.code).not.toBe(0);
+        expect(error.exitCode).not.toBe(0);
       }
     });
 
     test('Return version', async () => {
-      const {pkg} = await readPkgUp();
-      const {stdout, stderr, code} = await run(['--version', '--no-update-notifier']);
+      const {packageJson} = await readPkgUp();
+      const {stdout, stderr, exitCode} = await run(['--version', '--no-update-notifier']);
 
       expect(stderr).toBeFalsy();
-      expect(code).toBe(0);
-      expect(stdout).toBe(pkg.version);
+      expect(exitCode).toBe(0);
+      expect(stdout).toBe(packageJson.version);
     });
 
     test('Take html file passed via parameter', async () => {
-      const {stdout, code} = await run([
+      const {stdout, exitCode} = await run([
         'fixtures/generate-default.html',
         '--base',
         'fixtures',
@@ -78,34 +79,34 @@ describe('CLI', () => {
       ]);
       const expected = await read('expected/generate-default.css');
 
-      expect(code).toBe(0);
+      expect(exitCode).toBe(0);
       expect(nn(stdout)).toBe(expected);
     });
 
     test('Take html file piped to critical', async () => {
-      const {stdout, code} = await pipe(
+      const {stdout, exitCode} = await pipe(
         path.normalize('fixtures/generate-default.html'),
         ['--base', 'fixtures', '--width', '1300', '--height', '900']
       );
       const expected = await read('expected/generate-default.css');
 
-      expect(code).toBe(0);
+      expect(exitCode).toBe(0);
       expect(nn(stdout)).toBe(expected);
     });
 
     test('Pipe html file inside a folder to critical', async () => {
-      const {stdout, code} = await pipe(
+      const {stdout, exitCode} = await pipe(
         path.normalize('fixtures/folder/generate-default.html'),
         ['--base', 'fixtures', '--width', '1300', '--height', '900']
       );
       const expected = await read('expected/generate-default.css');
 
-      expect(code).toBe(0);
+      expect(exitCode).toBe(0);
       expect(nn(stdout)).toBe(expected);
     });
 
     test('Inline images to piped html file', async () => {
-      const {stdout, code} = await pipe(
+      const {stdout, exitCode} = await pipe(
         path.normalize('fixtures/generate-image.html'),
         [
           '-c',
@@ -121,45 +122,51 @@ describe('CLI', () => {
       );
       const expected = await read('expected/generate-image.css');
 
-      expect(code).toBe(0);
+      expect(exitCode).toBe(0);
       expect(nn(stdout)).toBe(expected);
     });
 
     test("Add an absolute image path to critical css if we can't determine document location", async () => {
-      const {stdout, code} = await pipe(
+      const {stdout, exitCode} = await pipe(
         path.normalize('fixtures/folder/generate-image.html'),
         ['-c', 'fixtures/styles/image-relative.css', '--base', 'fixtures', '--width', '1300', '--height', '900']
       );
       const expected = await read('expected/generate-image-absolute.css');
 
-      expect(code).toBe(0);
+      expect(exitCode).toBe(0);
       expect(nn(stdout)).toBe(expected);
     });
 
     test('Add absolute image paths on piped html without relative links', async () => {
-      const {stdout, code} = await pipe(
+      const {stdout, exitCode} = await pipe(
         path.normalize('fixtures/folder/subfolder/generate-image-absolute.html'),
         ['--base', 'fixtures', '--width', '1300', '--height', '900']
       );
       const expected = await read('expected/generate-image-absolute.css');
 
-      expect(code).toBe(0);
+      expect(exitCode).toBe(0);
       expect(nn(stdout)).toBe(expected);
     });
 
     test('Exit with code 1 and show help', async () => {
-      await expect(run(['fixtures/not-exists.html'])).rejects.toThrow('Usage:');
+      expect.assertions(2);
+      try {
+        await run(['fixtures/not-exists.html']);
+      } catch (error) {
+        expect(error.exitCode).toBe(1);
+        expect(error.stderr).toMatch('Usage:');
+      }
     });
   });
 
   let exit;
   describe('mocked', () => {
-    beforeEach(function() {
+    beforeEach(() => {
       jest.resetModules();
       exit = process.exit;
     });
 
-    afterEach(function() {
+    afterEach(() => {
       process.exit = exit;
     });
 
@@ -230,6 +237,22 @@ describe('CLI', () => {
           strict: true,
           timeout: 50000,
           renderWaitTime: 300,
+        },
+      });
+    });
+
+    test('Set request options prefixed with --request-', async () => {
+      const args = await getArgs([
+        'fixtures/generate-default.html',
+        '--request-method',
+        'get',
+        '--no-request-followRedirect',
+      ]);
+
+      expect(args).toMatchObject({
+        request: {
+          method: 'get',
+          followRedirect: false,
         },
       });
     });

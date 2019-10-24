@@ -1,4 +1,6 @@
-const Joi = require('joi');
+'use strict';
+
+const Joi = require('@hapi/joi');
 const debug = require('debug')('critical:config');
 const {ConfigError} = require('./errors');
 
@@ -37,6 +39,7 @@ const schema = Joi.object()
     concurrency: Joi.number().default(DEFAULT.concurrency),
     user: Joi.string(),
     pass: Joi.string(),
+    request: Joi.object().unknown(true),
     penthouse: Joi.object()
       .keys({
         url: Joi.any().forbidden(),
@@ -54,12 +57,14 @@ const schema = Joi.object()
         to: Joi.string(),
       }),
       Joi.func(),
+      Joi.boolean(),
     ],
     target: [
       Joi.string(),
       Joi.object().keys({
         css: Joi.string(),
         html: Joi.string(),
+        uncritical: Joi.string(),
       }),
     ],
     assetPaths: Joi.array().items(Joi.string()),
@@ -69,7 +74,7 @@ const schema = Joi.object()
   .xor('html', 'src');
 
 function getOptions(options = {}) {
-  const {error, value} = Joi.validate(options, schema);
+  const {error, value} = schema.validate(options);
   const {inline, dimensions, penthouse = {}, target, ignore} = value || {};
 
   if (error) {
@@ -97,10 +102,17 @@ function getOptions(options = {}) {
   // Set inline options
   value.inline = Boolean(inline) && {
     minify: value.minify,
-    extract: value.extract || false,
     basePath: value.base || process.cwd(),
     ...(inline === true ? {} : inline),
   };
+
+  if (value.inline.replaceStylesheets !== undefined && !Array.isArray(value.inline.replaceStylesheets)) {
+    if (value.inline.replaceStylesheets === 'false') {
+      value.inline.replaceStylesheets = false;
+    } else if (typeof value.inline.replaceStylesheets !== 'function') {
+      value.inline.replaceStylesheets = [value.inline.replaceStylesheets];
+    }
+  }
 
   // Set penthouse options
   value.penthouse = {
@@ -118,12 +130,26 @@ function getOptions(options = {}) {
     };
   }
 
+  if (target && target.uncritical) {
+    value.extract = true;
+  }
+
   debug(value);
 
   return value;
 }
 
+const validate = (key, val) => {
+  const {error} = schema.validate({[key]: val, html: '<html/>'});
+  if (error) {
+    return false;
+  }
+
+  return true;
+};
+
 module.exports = {
   DEFAULT,
+  validate,
   getOptions,
 };

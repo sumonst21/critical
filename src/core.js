@@ -1,3 +1,5 @@
+'use strict';
+
 const {EOL} = require('os');
 const path = require('path');
 const chalk = require('chalk');
@@ -12,10 +14,11 @@ const imageInliner = require('postcss-image-inliner');
 const penthouse = require('penthouse');
 const {PAGE_UNLOADED_DURING_EXECUTION_ERROR_MESSAGE} = require('penthouse/lib/core');
 const inlineCritical = require('inline-critical');
+const {extractCss} = require('inline-critical/src/css');
 const parseCssUrls = require('css-url-parser');
 const {reduceAsync} = require('./array');
 const {NoCssError} = require('./errors');
-const {getDocument, getDocumentFromSource, token, getAssetPaths, isRemote} = require('./file');
+const {getDocument, getDocumentFromSource, token, getAssetPaths, isRemote, normalizePath} = require('./file');
 
 /**
  * Returns a string of combined and deduped css rules.
@@ -61,7 +64,7 @@ function callPenthouse(document, options) {
   }
 
   if (user && pass) {
-    config.customPageHeaders = {...customPageHeaders, Authorization: 'Basic ' + token(user, pass)};
+    config.customPageHeaders = {...customPageHeaders, Authorization: `Basic ${token(user, pass)}`};
   }
 
   return sizes.map(({width, height}) => () => {
@@ -87,6 +90,8 @@ async function create(options = {}) {
     inline,
     ignore,
     minify,
+    extract,
+    target = {},
     inlineImages,
     maxImageFileSize,
     postcss: postProcess = [],
@@ -136,14 +141,10 @@ async function create(options = {}) {
     const refAssets = [...parseCssUrls(criticalCSS), ...document.stylesheets];
     const refAssetPaths = refAssets.reduce((res, file) => [...res, path.dirname(file)], []);
 
-    const searchpaths = await reduceAsync(
-      [...new Set(refAssetPaths)],
-      async (res, file) => {
-        const paths = await getAssetPaths(document, file, options, false);
-        return [...new Set([...res, ...paths])];
-      },
-      []
-    );
+    const searchpaths = await reduceAsync([], [...new Set(refAssetPaths)], async (res, file) => {
+      const paths = await getAssetPaths(document, file, options, false);
+      return [...new Set([...res, ...paths])];
+    });
 
     const filtered = searchpaths.filter(p => isRemote(p) || p.includes(process.cwd()) || (base && p.includes(base)));
 
@@ -171,20 +172,60 @@ async function create(options = {}) {
     criticalCSS = prettier.format(criticalCSS, {parser: 'css'});
   }
 
+  const result = {
+    css: criticalCSS,
+  };
+
+  // Define uncritical as lazy evaluated property
+  const lazyUncritical = (orig, diff) =>
+    function() {
+      if (!this._uncritical) {
+        this._uncritical = extractCss(orig, diff);
+      }
+
+      return this._uncritical;
+    };
+
+  Object.defineProperty(result, 'uncritical', {
+    get: lazyUncritical(document.css, criticalCSS),
+  });
+
   // Inline
   if (inline) {
-    const inlined = inlineCritical(document.contents.toString(), criticalCSS, inline);
+    const {replaceStylesheets} = inline;
+
+    if (typeof replaceStylesheets === 'function') {
+      inline.replaceStylesheets = await replaceStylesheets(document, result.uncritical);
+    }
+
+    // If replaceStylesheets is not set via option and and uncritical is empty
+    if (extract && replaceStylesheets === undefined) {
+      if (result.uncritical.trim() === '') {
+        inline.replaceStylesheets = [];
+      }
+    }
+
+    if (target.uncritical) {
+      const uncriticalHref = normalizePath(path.relative(document.cwd, path.resolve(base, target.uncritical)));
+      // Only replace stylesheets if the uncriticalHref is inside document.cwd and replaceStylesheets is not set via options
+      if (!/^\.\.\//.test(uncriticalHref) && replaceStylesheets === undefined) {
+        inline.replaceStylesheets = [`/${uncriticalHref}`];
+      }
+    } else {
+      inline.extract = extract;
+    }
+
+    const inlined = inlineCritical(document.contents.toString(), criticalCSS, {...inline, basePath: document.cwd});
     document.contents = Buffer.from(inlined);
   }
 
   // Clean tempfiles
   await document.cleanup();
 
+  result.html = document.contents.toString();
+
   // Cleanup output
-  return {
-    css: criticalCSS,
-    html: document.contents.toString(),
-  };
+  return result;
 }
 
 module.exports = {

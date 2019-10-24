@@ -1,4 +1,5 @@
-/* eslint-env jest node */
+'use strict';
+
 const path = require('path');
 const {createServer} = require('http');
 const getPort = require('get-port');
@@ -9,7 +10,7 @@ const {read} = require('./helper');
 
 jest.setTimeout(20000);
 
-// Setup static fileserver to mimic remote requests
+// Set up static fileserver to mimic remote requests
 let server;
 let port;
 beforeAll(async () => {
@@ -34,15 +35,13 @@ afterEach(() => {
   stderr.mockRestore();
 });
 
-
 test('Generate critical-path CSS', async () => {
   const css = read('expected/generate-default.css');
   const html = read('fixtures/generate-default.html');
 
-
   try {
-    const result =  await create({
-      src:  `http://localhost:${port}/generate-default.html`,
+    const result = await create({
+      src: `http://localhost:${port}/generate-default.html`,
       minify: true,
     });
     expect(result.css).toBe(css);
